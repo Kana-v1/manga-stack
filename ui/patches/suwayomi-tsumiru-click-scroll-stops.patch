@@ -1,0 +1,261 @@
+diff --git a/lib/src/constants/db_keys.dart b/lib/src/constants/db_keys.dart
+index 9da1c7d1..aeb69ccb 100644
+--- a/lib/src/constants/db_keys.dart
++++ b/lib/src/constants/db_keys.dart
+@@ -236,6 +236,9 @@ enum DBKeys {
+   cropBordersWebtoon(false),
+   smoothAutoScroll(true),
+   readerScrollAmount(ReaderScrollAmount.large),
++  // manga-stack: click_scroll_stops.dart
++  clickScrollStops(true),
++  clickScrollLinePercent(35),
+   autoScrollIntervalSeconds(3),
+   autoAdvanceIntervalSeconds(5),
+   readerBackgroundColor(ReaderBackgroundColor.black),
+diff --git a/lib/src/features/manga_book/presentation/reader/widgets/chrome/tabs/reading_mode_tab.dart b/lib/src/features/manga_book/presentation/reader/widgets/chrome/tabs/reading_mode_tab.dart
+index 7bc93ebf..cec2620b 100644
+--- a/lib/src/features/manga_book/presentation/reader/widgets/chrome/tabs/reading_mode_tab.dart
++++ b/lib/src/features/manga_book/presentation/reader/widgets/chrome/tabs/reading_mode_tab.dart
+@@ -20,6 +20,7 @@ import '../../../controller/auto_webtoon.dart';
+ import '../../../controller/reader_mode_adapter.dart';
+ import '../../../controller/reader_settings_model.dart';
+ import '../../../utils/reader_mode_kind.dart';
++import '../../reader_mode/infinity_continuous/click_scroll_stops.dart';
+ import 'int_slider_tile.dart';
+ 
+ class ReadingModeTab extends ConsumerWidget {
+@@ -391,6 +392,7 @@ class _LongStripSection extends ConsumerWidget {
+               ),
+           ],
+         ),
++        const ClickScrollStopsSettings(), // manga-stack
+         CompactSwitchListTile(
+           controlAffinity: ListTileControlAffinity.trailing,
+           title: Text(context.l10n.animatePageTransitions),
+diff --git a/lib/src/features/manga_book/presentation/reader/widgets/reader_mode/infinity_continuous/bubble_text_layer.dart b/lib/src/features/manga_book/presentation/reader/widgets/reader_mode/infinity_continuous/bubble_text_layer.dart
+index ecca96cc..de7640b9 100644
+--- a/lib/src/features/manga_book/presentation/reader/widgets/reader_mode/infinity_continuous/bubble_text_layer.dart
++++ b/lib/src/features/manga_book/presentation/reader/widgets/reader_mode/infinity_continuous/bubble_text_layer.dart
+@@ -13,6 +13,7 @@ import 'package:material_ui/material_ui.dart';
+ 
+ import '../../../../../../../utils/extensions/custom_extensions.dart';
+ import '../../../../../../../utils/misc/toast/toast.dart';
++import 'click_scroll_stops.dart';
+ 
+ /// READAHEAD_PORT in manga-stack's stack.conf.
+ const _readaheadPort = 8765;
+@@ -25,8 +26,20 @@ class _Bubble {
+   final String text;
+ }
+ 
+-/// Page index -> its bubbles.
+-typedef _ChapterText = Map<int, List<_Bubble>>;
++class _PageText {
++  const _PageText(this.bubbles, this.panels);
++
++  final List<_Bubble> bubbles;
++
++  /// Where the page's panels start, as fractions of its height (click_scroll_stops.dart).
++  final List<double> panels;
++
++  /// Where a forward click may stop on this page: bubble tops and panel tops.
++  List<double> get stops => [for (final b in bubbles) b.box[1], ...panels];
++}
++
++/// Page index -> its bubbles and panels.
++typedef _ChapterText = Map<int, _PageText>;
+ 
+ final _cache = <int, Future<_ChapterText>>{};
+ final _retryAfter = <int, DateTime>{};
+@@ -60,7 +73,7 @@ Future<_ChapterText> _fetch(int chapterId) async {
+     if (response.statusCode != 200) return const {};
+     final json =
+         jsonDecode(utf8.decode(response.bodyBytes)) as Map<String, dynamic>;
+-    final text = <int, List<_Bubble>>{};
++    final text = <int, _PageText>{};
+     for (final page in (json['pages'] as List).cast<Map<String, dynamic>>()) {
+       final bubbles = [
+         for (final region
+@@ -70,7 +83,13 @@ Future<_ChapterText> _fetch(int chapterId) async {
+             region['text'] as String,
+           ),
+       ];
+-      if (bubbles.isNotEmpty) text[page['index'] as int] = bubbles;
++      final panels = [
++        for (final top in (page['panels'] as List?) ?? const [])
++          (top as num).toDouble(),
++      ];
++      if (bubbles.isNotEmpty || panels.isNotEmpty) {
++        text[page['index'] as int] = _PageText(bubbles, panels);
++      }
+     }
+     return text;
+   } catch (_) {
+@@ -97,13 +116,20 @@ class BubbleTextLayer extends HookWidget {
+     final text = useFuture(
+       useMemoized(() => _chapterText(chapterId), [chapterId]),
+     );
+-    final bubbles = text.data?[pageIndex];
++    final page = text.data?[pageIndex];
++    final bubbles = page?.bubbles;
++    // The page's stops for the click-scroll, while it is mounted.
++    useEffect(() {
++      if (page == null) return null;
++      ScrollStops.set(context, page.stops);
++      return () => ScrollStops.remove(context);
++    }, [page]);
+     // Always a Stack, so the page image keeps its element when the text arrives.
+     return Stack(
+       fit: StackFit.passthrough,
+       children: [
+         child,
+-        if (bubbles != null)
++        if (bubbles != null && bubbles.isNotEmpty)
+           Positioned.fill(
+             child: LayoutBuilder(
+               builder: (context, size) => Stack(
+diff --git a/lib/src/features/manga_book/presentation/reader/widgets/reader_mode/infinity_continuous/click_scroll_stops.dart b/lib/src/features/manga_book/presentation/reader/widgets/reader_mode/infinity_continuous/click_scroll_stops.dart
+new file mode 100644
+index 00000000..8bb48f93
+--- /dev/null
++++ b/lib/src/features/manga_book/presentation/reader/widgets/reader_mode/infinity_continuous/click_scroll_stops.dart
+@@ -0,0 +1,108 @@
++// manga-stack: in the long strip, a click (or key) that scrolls forward stops at the next speech
++// bubble or panel. Without this, it always moves the same share of the screen. Everything above
++// the reading line counts as read. The first stop below the line moves to just under the top
++// edge. A click never moves further than the scroll amount of the reader. So art without stops
++// moves at the usual speed, and nothing is skipped. The stops come from readahead
++// (/api/ocr): bubble boxes and panel tops, as fractions of each page (bubble_text_layer.dart).
++
++import 'dart:math' as math;
++
++import 'package:hooks_riverpod/hooks_riverpod.dart';
++import 'package:material_ui/material_ui.dart';
++
++import '../../../../../../../constants/db_keys.dart';
++import '../../../../../../../utils/mixin/shared_preferences_client_mixin.dart';
++import '../../../../../../../widgets/compact_switch.dart';
++import '../../chrome/tabs/int_slider_tile.dart';
++
++/// Room left above the stop, as a share of the screen.
++const _topMargin = 0.04;
++
++final clickScrollStopsProvider = NotifierProvider<ClickScrollStops, bool?>(
++  ClickScrollStops.new,
++);
++
++class ClickScrollStops extends Notifier<bool?>
++    with SharedPreferenceClientMixin<bool> {
++  @override
++  bool? build() => initialize(DBKeys.clickScrollStops);
++}
++
++/// The reading line, in percent of the screen from the top.
++final clickScrollLineProvider = NotifierProvider<ClickScrollLine, int?>(
++  ClickScrollLine.new,
++);
++
++class ClickScrollLine extends Notifier<int?>
++    with SharedPreferenceClientMixin<int> {
++  @override
++  int? build() => initialize(DBKeys.clickScrollLinePercent);
++}
++
++/// The stops of the pages on the screen (and just outside it), as fractions of the height of
++/// each page. The key is the element of the page. A page registers its stops while it is mounted.
++abstract final class ScrollStops {
++  static final _pages = <BuildContext, List<double>>{};
++
++  static void set(BuildContext page, List<double> stops) =>
++      _pages[page] = stops;
++
++  static void remove(BuildContext page) => _pages.remove(page);
++
++  /// How far to scroll forward from [position], at most [step] pixels. The scroll brings the
++  /// first stop below the reading line ([line], a share of the screen) to just under the top edge.
++  static double next(ScrollPosition position, double step, double line) {
++    final viewport = position.context.storageContext.findRenderObject();
++    if (viewport is! RenderBox || !viewport.hasSize) return step;
++    final height = viewport.size.height;
++    double? nearest;
++    for (final MapEntry(key: page, value: stops) in _pages.entries) {
++      final box = page.mounted ? page.findRenderObject() : null;
++      if (box is! RenderBox || !box.attached || !box.hasSize) continue;
++      for (final stop in stops) {
++        // The stop in the viewport's own coordinates, which are scroll pixels.
++        final y = viewport
++            .globalToLocal(box.localToGlobal(Offset(0, stop * box.size.height)))
++            .dy;
++        if (y > height * line && (nearest == null || y < nearest)) nearest = y;
++      }
++    }
++    if (nearest == null) return step;
++    return math.min(step, nearest - height * _topMargin);
++  }
++}
++
++/// The settings, shown with the long strip's scroll amount.
++class ClickScrollStopsSettings extends ConsumerWidget {
++  const ClickScrollStopsSettings({super.key});
++
++  @override
++  Widget build(BuildContext context, WidgetRef ref) {
++    final enabled =
++        ref.watch(clickScrollStopsProvider) ??
++        DBKeys.clickScrollStops.initial as bool;
++    final line =
++        ref.watch(clickScrollLineProvider) ??
++        DBKeys.clickScrollLinePercent.initial as int;
++    return Column(
++      crossAxisAlignment: CrossAxisAlignment.stretch,
++      children: [
++        CompactSwitchListTile(
++          controlAffinity: ListTileControlAffinity.trailing,
++          title: const Text('Scroll to the next bubble or panel'),
++          value: enabled,
++          onChanged: ref.read(clickScrollStopsProvider.notifier).update,
++        ),
++        if (enabled)
++          IntSliderTile(
++            title: 'Reading line (bubbles above it count as read)',
++            valueLabel: '$line% of the screen',
++            value: line,
++            min: 10,
++            max: 80,
++            onChanged: ref.read(clickScrollLineProvider.notifier).update,
++          ),
++      ],
++    );
++  }
++}
+diff --git a/lib/src/features/manga_book/presentation/reader/widgets/reader_mode/infinity_continuous/multichapter_continuous_reader_mode.dart b/lib/src/features/manga_book/presentation/reader/widgets/reader_mode/infinity_continuous/multichapter_continuous_reader_mode.dart
+index 54d1ed3c..61e778aa 100644
+--- a/lib/src/features/manga_book/presentation/reader/widgets/reader_mode/infinity_continuous/multichapter_continuous_reader_mode.dart
++++ b/lib/src/features/manga_book/presentation/reader/widgets/reader_mode/infinity_continuous/multichapter_continuous_reader_mode.dart
+@@ -56,6 +56,7 @@ import '../../reader_navigation_layout/page_column_cutout.dart';
+ import '../../reader_wrapper.dart';
+ import '../reader_zoom_view.dart';
+ import 'bubble_text_layer.dart';
++import 'click_scroll_stops.dart';
+ import 'infinity_continuous_config.dart';
+ import 'infinity_continuous_feedback.dart';
+ import 'infinity_continuous_utils.dart';
+@@ -1063,7 +1064,17 @@ class MultiChapterContinuousReaderMode extends HookConsumerWidget {
+         final double viewport = pos.viewportDimension;
+         // Pixels increase toward later items even when the list is reversed.
+         final double sign = forward ? 1.0 : -1.0;
+-        final double offset = viewport * scrollAmount.fraction * sign;
++        double offset = viewport * scrollAmount.fraction * sign;
++        // manga-stack: forward stops at the next bubble or panel (click_scroll_stops.dart).
++        if (forward &&
++            pos.axisDirection == AxisDirection.down &&
++            (ref.read(clickScrollStopsProvider) ??
++                DBKeys.clickScrollStops.initial as bool)) {
++          final int line =
++              ref.read(clickScrollLineProvider) ??
++              DBKeys.clickScrollLinePercent.initial as int;
++          offset = ScrollStops.next(pos, offset, line / 100);
++        }
+         final double target = (pos.pixels + offset).clamp(
+           pos.minScrollExtent,
+           pos.maxScrollExtent,

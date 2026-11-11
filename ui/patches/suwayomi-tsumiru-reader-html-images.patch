@@ -1,0 +1,50 @@
+diff --git a/lib/src/features/manga_book/presentation/reader/widgets/reader_mode/infinity_continuous/multichapter_continuous_reader_mode.dart b/lib/src/features/manga_book/presentation/reader/widgets/reader_mode/infinity_continuous/multichapter_continuous_reader_mode.dart
+index f0d9d219..d91e57d3 100644
+--- a/lib/src/features/manga_book/presentation/reader/widgets/reader_mode/infinity_continuous/multichapter_continuous_reader_mode.dart
++++ b/lib/src/features/manga_book/presentation/reader/widgets/reader_mode/infinity_continuous/multichapter_continuous_reader_mode.dart
+@@ -1286,6 +1286,8 @@ class MultiChapterContinuousReaderMode extends HookConsumerWidget {
+       }
+       Widget page = ServerImage(
+         showReloadButton: true,
++        // Web: full resolution for strips taller than the GPU texture limit.
++        preferHtmlElementOnWeb: true,
+         fit: fit,
+         appendApiToUrl: false,
+         cropBorders: cropBorders,
+diff --git a/lib/src/widgets/server_image.dart b/lib/src/widgets/server_image.dart
+index 0aa71e0a..c03c4b3c 100644
+--- a/lib/src/widgets/server_image.dart
++++ b/lib/src/widgets/server_image.dart
+@@ -185,8 +185,16 @@ class ServerImage extends HookConsumerWidget {
+     this.fallbackImageUrl,
+     this.coverVersion,
+     this.fallbackCoverVersion,
++    this.preferHtmlElementOnWeb = false,
+   });
+ 
++  /// Web only: show the image as an HTML <img> element, not as a GPU texture. The browser limits
++  /// a texture to its max texture size (often 16384 px). So [TextureLimitedImageProvider] makes
++  /// taller images smaller, for example upscaled webtoon strips. An <img> element keeps the full
++  /// resolution. This applies only when the request needs no headers. Opacity, colour filters
++  /// and backdrop overlays do not apply to an <img> element.
++  final bool preferHtmlElementOnWeb;
++
+   final String? localFilePath;
+ 
+   final String imageUrl;
+@@ -514,8 +522,13 @@ class ServerImage extends HookConsumerWidget {
+       }
+     }
+ 
+-    // Some cover hosts send no CORS headers, so byte fetches fail on web.
+-    if (external && kIsWeb) {
++    // Some cover hosts send no CORS headers, so byte fetches fail on web. Pages that ask for it
++    // use the same <img> path, to avoid the GPU texture size limit.
++    final htmlElement =
++        external ||
++        (preferHtmlElementOnWeb &&
++            (httpHeaders == null || httpHeaders.isEmpty));
++    if (htmlElement && kIsWeb) {
+       if (imageBuilder != null) {
+         return AppUtils.wrapOn(
+           wrapper,

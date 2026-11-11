@@ -1,0 +1,13 @@
+{
+  "name": "manga-stack",
+  "private": true,
+  "type": "module",
+  "description": "The scripts (scripts/) and tools (tools/) of manga-stack, in Bun + TypeScript",
+  "scripts": {
+    "check": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.4.4",
+    "typescript": "^7.0.2"
+  }
+}

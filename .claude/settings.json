@@ -1,0 +1,29 @@
+{
+  "attribution": {
+    "commit": "",
+    "pr": ""
+  },
+  "permissions": {
+    "allow": [
+      "Read",
+      "Bash(tools/doctor.ts*)",
+      "Bash(tools/gql.ts *)",
+      "Bash(tools/library.ts*)",
+      "Bash(tools/ext-check.ts*)",
+      "Bash(ui/patch-tool.ts check*)",
+      "Bash(ui/patch-tool.ts lint *)",
+      "Bash(ui/patch-tool.ts status*)",
+      "Bash(git -C Suwayomi-Tsumiru status*)",
+      "Bash(git -C Suwayomi-Tsumiru diff*)",
+      "Bash(git -C Suwayomi-Tsumiru log*)",
+      "Bash(git -C Suwayomi-Tsumiru show*)",
+      "Bash(git -C Suwayomi-Tsumiru grep*)",
+      "Bash(git -C Suwayomi-Tsumiru rev-list*)",
+      "Bash(git -C Suwayomi-Tsumiru ls-files*)"
+    ],
+    "ask": [
+      "Bash(tools/gql.ts --mutate*)",
+      "Bash(tools/gql.ts *--mutate*)"
+    ]
+  }
+}

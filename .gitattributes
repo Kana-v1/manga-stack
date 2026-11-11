@@ -1,0 +1,6 @@
+* text=auto eol=lf
+# applied byte-for-byte by git apply: never convert
+*.patch -text
+*.bat -text
+*.jar binary
+*.tachibk binary

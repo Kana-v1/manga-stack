@@ -1,0 +1,26 @@
+# Upstream Suwayomi-Tsumiru clone: its own git repo, at the TSUMIRU_VERSION tag (stack.conf)
+/ui/Suwayomi-Tsumiru/
+# Server release, unpacked by scripts/build-server.ts (and its staging dirs)
+/server/
+/.server-staging.*/
+# Downloads, checksums, the Flutter SDK
+/.cache/
+# Library backups: personal data the server writes daily
+/backups/*.tachibk
+.claude/settings.local.json
+# Python and checker caches (ruff and mypy also ignore their own)
+__pycache__/
+.ruff_cache/
+.mypy_cache/
+# Editor settings and swap files
+/.vscode/
+*.swp
+*~
+
+# Readahead: Python venv (PyTorch, ~5 GB) and downloaded models
+/readahead/.venv/
+/readahead/models/
+# Local research notes for a recommender; code added to recommendations/ is tracked
+/recommendations/*.md
+# Bun: type definitions and the TypeScript checker (bun install)
+/node_modules/

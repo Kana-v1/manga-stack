@@ -1,0 +1,77 @@
+diff --git a/lib/src/features/manga_book/domain/chapter/chapter_model.dart b/lib/src/features/manga_book/domain/chapter/chapter_model.dart
+index 221bb722..0cb9f75b 100644
+--- a/lib/src/features/manga_book/domain/chapter/chapter_model.dart
++++ b/lib/src/features/manga_book/domain/chapter/chapter_model.dart
+@@ -31,4 +31,9 @@ extension ChapterExtension on Fragment$ChapterDto {
+   Map<String, String> get metaData => {
+     for (final metaItem in meta) metaItem.key: metaItem.value,
+   };
++
++  /// manga-stack: readahead tags each chapter that it upscaled with this chapter
++  /// meta key (readahead/tags.py). Only the download holds the upscaled pages.
++  bool get isUpscaled =>
++      user.isDownloaded && meta.any((m) => m.key == 'manga_stack_upscaled');
+ }
+diff --git a/lib/src/features/manga_book/presentation/manga_details/widgets/chapter_grid_tile.dart b/lib/src/features/manga_book/presentation/manga_details/widgets/chapter_grid_tile.dart
+index ab620464..83174ec2 100644
+--- a/lib/src/features/manga_book/presentation/manga_details/widgets/chapter_grid_tile.dart
++++ b/lib/src/features/manga_book/presentation/manga_details/widgets/chapter_grid_tile.dart
+@@ -97,6 +97,16 @@ class ChapterGridTile extends StatelessWidget {
+                 color: isRead ? cs.outline : cs.primary,
+               ),
+             ),
++          if (chapter.isUpscaled)
++            Positioned(
++              top: 1,
++              left: 5,
++              child: Icon(
++                Icons.hd_rounded,
++                size: 13,
++                color: isRead ? cs.outline : cs.primary,
++              ),
++            ),
+           if (inProgress)
+             Positioned(
+               bottom: 3,
+diff --git a/lib/src/features/manga_book/presentation/manga_details/widgets/chapter_list_tile.dart b/lib/src/features/manga_book/presentation/manga_details/widgets/chapter_list_tile.dart
+index dcd489b5..96609669 100644
+--- a/lib/src/features/manga_book/presentation/manga_details/widgets/chapter_list_tile.dart
++++ b/lib/src/features/manga_book/presentation/manga_details/widgets/chapter_list_tile.dart
+@@ -184,6 +184,19 @@ class ChapterListTile extends HookConsumerWidget {
+                 ),
+                 const Gap(4),
+               ],
++              if (chapter.isUpscaled) ...[
++                Tooltip(
++                  message: 'Upscaled',
++                  child: Icon(
++                    Icons.hd_rounded,
++                    color: chapter.user.isRead.ifNull()
++                        ? readColor
++                        : context.iconColor,
++                    size: 20,
++                  ),
++                ),
++                const Gap(4),
++              ],
+               Expanded(
+                 child: Text(
+                   showChapterNumber
+@@ -386,6 +399,17 @@ class ChapterListTile extends HookConsumerWidget {
+                           )
+                         else
+                           SizedBox(width: desktopPageLineStart(context, 13)),
++                        if (chapter.isUpscaled) ...[
++                          Tooltip(
++                            message: 'Upscaled',
++                            child: Icon(
++                              Icons.hd_rounded,
++                              size: 18,
++                              color: read ? readColor : cs.primary,
++                            ),
++                          ),
++                          const Gap(6),
++                        ],
+                         Expanded(
+                           child: Text(
+                             title,

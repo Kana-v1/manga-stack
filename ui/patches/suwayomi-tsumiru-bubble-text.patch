@@ -1,0 +1,224 @@
+diff --git a/lib/src/features/manga_book/presentation/reader/widgets/reader_mode/infinity_continuous/bubble_text_layer.dart b/lib/src/features/manga_book/presentation/reader/widgets/reader_mode/infinity_continuous/bubble_text_layer.dart
+new file mode 100644
+index 00000000..ecca96cc
+--- /dev/null
++++ b/lib/src/features/manga_book/presentation/reader/widgets/reader_mode/infinity_continuous/bubble_text_layer.dart
+@@ -0,0 +1,167 @@
++// manga-stack: the text of the speech bubbles of a page. Readahead recognises it
++// (readahead/ocr.py) and serves it at http://<host>:8765/api/ocr?chapterId=N. The page gets
++// invisible boxes over its bubbles. A click on a box copies the text of the bubble.
++
++import 'dart:async';
++import 'dart:convert';
++
++import 'package:flutter/services.dart';
++import 'package:flutter_hooks/flutter_hooks.dart';
++import 'package:hooks_riverpod/hooks_riverpod.dart';
++import 'package:http/http.dart' as http;
++import 'package:material_ui/material_ui.dart';
++
++import '../../../../../../../utils/extensions/custom_extensions.dart';
++import '../../../../../../../utils/misc/toast/toast.dart';
++
++/// READAHEAD_PORT in manga-stack's stack.conf.
++const _readaheadPort = 8765;
++
++class _Bubble {
++  const _Bubble(this.box, this.text);
++
++  /// Left, top, right, bottom as fractions of the page's width and height.
++  final List<double> box;
++  final String text;
++}
++
++/// Page index -> its bubbles.
++typedef _ChapterText = Map<int, List<_Bubble>>;
++
++final _cache = <int, Future<_ChapterText>>{};
++final _retryAfter = <int, DateTime>{};
++
++/// The bubbles of a chapter, fetched once for each chapter. For a chapter without text, the
++/// fetch repeats a minute later.
++Future<_ChapterText> _chapterText(int chapterId) {
++  final retry = _retryAfter[chapterId];
++  if (retry != null && DateTime.now().isAfter(retry)) {
++    _cache.remove(chapterId);
++    _retryAfter.remove(chapterId);
++  }
++  return _cache[chapterId] ??= _fetch(chapterId).then((text) {
++    if (text.isEmpty) {
++      _retryAfter[chapterId] = DateTime.now().add(const Duration(minutes: 1));
++    }
++    return text;
++  });
++}
++
++Future<_ChapterText> _fetch(int chapterId) async {
++  final url = Uri(
++    scheme: Uri.base.scheme,
++    host: Uri.base.host,
++    port: _readaheadPort,
++    path: '/api/ocr',
++    queryParameters: {'chapterId': '$chapterId'},
++  );
++  try {
++    final response = await http.get(url).timeout(const Duration(seconds: 10));
++    if (response.statusCode != 200) return const {};
++    final json =
++        jsonDecode(utf8.decode(response.bodyBytes)) as Map<String, dynamic>;
++    final text = <int, List<_Bubble>>{};
++    for (final page in (json['pages'] as List).cast<Map<String, dynamic>>()) {
++      final bubbles = [
++        for (final region
++            in (page['regions'] as List).cast<Map<String, dynamic>>())
++          _Bubble(
++            (region['box'] as List).map((v) => (v as num).toDouble()).toList(),
++            region['text'] as String,
++          ),
++      ];
++      if (bubbles.isNotEmpty) text[page['index'] as int] = bubbles;
++    }
++    return text;
++  } catch (_) {
++    // No readahead, or no text: the page has no bubble boxes.
++    return const {};
++  }
++}
++
++/// [child] is the page image, which sets the size. The bubble boxes are on top of it.
++class BubbleTextLayer extends HookWidget {
++  const BubbleTextLayer({
++    super.key,
++    required this.chapterId,
++    required this.pageIndex,
++    required this.child,
++  });
++
++  final int chapterId;
++  final int pageIndex;
++  final Widget child;
++
++  @override
++  Widget build(BuildContext context) {
++    final text = useFuture(
++      useMemoized(() => _chapterText(chapterId), [chapterId]),
++    );
++    final bubbles = text.data?[pageIndex];
++    // Always a Stack, so the page image keeps its element when the text arrives.
++    return Stack(
++      fit: StackFit.passthrough,
++      children: [
++        child,
++        if (bubbles != null)
++          Positioned.fill(
++            child: LayoutBuilder(
++              builder: (context, size) => Stack(
++                children: [
++                  for (final bubble in bubbles)
++                    Positioned(
++                      left: bubble.box[0] * size.maxWidth,
++                      top: bubble.box[1] * size.maxHeight,
++                      width: (bubble.box[2] - bubble.box[0]) * size.maxWidth,
++                      height: (bubble.box[3] - bubble.box[1]) * size.maxHeight,
++                      child: _BubbleBox(text: bubble.text),
++                    ),
++                ],
++              ),
++            ),
++          ),
++      ],
++    );
++  }
++}
++
++/// Invisible until the mouse is over it; a click copies the text.
++class _BubbleBox extends HookConsumerWidget {
++  const _BubbleBox({required this.text});
++
++  final String text;
++
++  @override
++  Widget build(BuildContext context, WidgetRef ref) {
++    final hovered = useState(false);
++    return MouseRegion(
++      cursor: SystemMouseCursors.click,
++      onEnter: (_) => hovered.value = true,
++      onExit: (_) => hovered.value = false,
++      child: GestureDetector(
++        behavior: HitTestBehavior.opaque,
++        onTap: () => unawaited(_copy(context, ref, text)),
++        child: DecoratedBox(
++          decoration: BoxDecoration(
++            borderRadius: BorderRadius.circular(8),
++            border: hovered.value
++                ? Border.all(
++                    color: Theme.of(context).colorScheme.primary,
++                    width: 2,
++                  )
++                : null,
++          ),
++        ),
++      ),
++    );
++  }
++}
++
++/// Copies the text of the bubble, and shows a toast at the bottom that says so.
++Future<void> _copy(BuildContext context, WidgetRef ref, String text) async {
++  await Clipboard.setData(ClipboardData(text: text));
++  if (!context.mounted) return;
++  ref
++      .read(toastProvider)
++      ?.show(context.l10n.copiedToClipboard, instantShow: true);
++}
+diff --git a/lib/src/features/manga_book/presentation/reader/widgets/reader_mode/infinity_continuous/multichapter_continuous_reader_mode.dart b/lib/src/features/manga_book/presentation/reader/widgets/reader_mode/infinity_continuous/multichapter_continuous_reader_mode.dart
+index d91e57d3..8f1c046c 100644
+--- a/lib/src/features/manga_book/presentation/reader/widgets/reader_mode/infinity_continuous/multichapter_continuous_reader_mode.dart
++++ b/lib/src/features/manga_book/presentation/reader/widgets/reader_mode/infinity_continuous/multichapter_continuous_reader_mode.dart
+@@ -54,6 +54,7 @@ import '../../../utils/reader_progress_queue.dart';
+ import '../../mouse_wheel_speed.dart';
+ import '../../reader_wrapper.dart';
+ import '../reader_zoom_view.dart';
++import 'bubble_text_layer.dart';
+ import 'infinity_continuous_config.dart';
+ import 'infinity_continuous_feedback.dart';
+ import 'infinity_continuous_utils.dart';
+@@ -1341,7 +1342,15 @@ class MultiChapterContinuousReaderMode extends HookConsumerWidget {
+             },
+           );
+           // Center loosens cross-axis constraints so scaleDown can shrink to native size.
+-          return pagesAtNaturalSize ? Center(child: image) : image;
++          if (pagesAtNaturalSize) return Center(child: image);
++          // manga-stack: bubble text that a click copies. Its boxes are fractions of the uncropped page.
++          return cropBorders
++              ? image
++              : BubbleTextLayer(
++                  chapterId: loc.chapterId,
++                  pageIndex: loc.pageIndex,
++                  child: image,
++                );
+         },
+       );
+       if (splitTallImages) {
+@@ -1641,8 +1650,10 @@ void _markChapterRead(
+ }
+ 
+ class _PageLoc {
+-  const _PageLoc(this.imageUrl);
++  const _PageLoc(this.imageUrl, this.chapterId, this.pageIndex);
+   final String imageUrl;
++  final int chapterId;
++  final int pageIndex;
+ }
+ 
+ _PageLoc? _locate(int globalIndex, List<_LoadedChapter> loaded) {
+@@ -1650,7 +1661,8 @@ _PageLoc? _locate(int globalIndex, List<_LoadedChapter> loaded) {
+   for (final entry in loaded) {
+     final n = entry.pages.pages.length;
+     if (globalIndex < cumulative + n) {
+-      return _PageLoc(entry.pages.pages[globalIndex - cumulative]);
++      final pageIndex = globalIndex - cumulative;
++      return _PageLoc(entry.pages.pages[pageIndex], entry.chapterId, pageIndex);
+     }
+     cumulative += n;
+   }

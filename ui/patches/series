@@ -1,0 +1,6 @@
+# The order the patches apply in, onto the TSUMIRU_VERSION tag (ui/README.md).
+suwayomi-tsumiru-reader-html-images.patch
+suwayomi-tsumiru-upscaled-mark.patch
+suwayomi-tsumiru-bubble-text.patch
+suwayomi-tsumiru-tap-zones-beside-page.patch
+suwayomi-tsumiru-click-scroll-stops.patch

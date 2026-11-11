@@ -1,0 +1,106 @@
+diff --git a/lib/src/features/manga_book/presentation/reader/widgets/reader_mode/infinity_continuous/multichapter_continuous_reader_mode.dart b/lib/src/features/manga_book/presentation/reader/widgets/reader_mode/infinity_continuous/multichapter_continuous_reader_mode.dart
+index 8f1c046c..54d1ed3c 100644
+--- a/lib/src/features/manga_book/presentation/reader/widgets/reader_mode/infinity_continuous/multichapter_continuous_reader_mode.dart
++++ b/lib/src/features/manga_book/presentation/reader/widgets/reader_mode/infinity_continuous/multichapter_continuous_reader_mode.dart
+@@ -52,6 +52,7 @@ import '../../../utils/flush_progress_on_lifecycle.dart';
+ import '../../../utils/reader_initial_page.dart';
+ import '../../../utils/reader_progress_queue.dart';
+ import '../../mouse_wheel_speed.dart';
++import '../../reader_navigation_layout/page_column_cutout.dart';
+ import '../../reader_wrapper.dart';
+ import '../reader_zoom_view.dart';
+ import 'bubble_text_layer.dart';
+@@ -507,6 +508,8 @@ class MultiChapterContinuousReaderMode extends HookConsumerWidget {
+     final double crossAxisExtent = isHorizontal
+         ? context.height
+         : maxContentWidth;
++    // manga-stack: the tap zones leave this column to the page (page_column_cutout.dart).
++    PageColumn.width = isHorizontal ? null : crossAxisExtent;
+     // Once-bound callbacks read live layout parameters so old closures cannot reserve stale widths.
+     final layoutParams = useRef<({bool naturalSize, double columnWidth})>((
+       naturalSize: pagesAtNaturalSize,
+diff --git a/lib/src/features/manga_book/presentation/reader/widgets/reader_navigation_layout/page_column_cutout.dart b/lib/src/features/manga_book/presentation/reader/widgets/reader_navigation_layout/page_column_cutout.dart
+new file mode 100644
+index 00000000..9dd926a6
+--- /dev/null
++++ b/lib/src/features/manga_book/presentation/reader/widgets/reader_navigation_layout/page_column_cutout.dart
+@@ -0,0 +1,44 @@
++// manga-stack: in the long-strip reader, a click on the page column goes to the page (its
++// bubble text), not to the tap zones. Only the margins beside the page move the reader.
++
++import 'package:flutter/rendering.dart';
++import 'package:flutter/widgets.dart';
++
++/// Width of the long-strip page column, centred on the screen. The long-strip reader sets it
++/// during layout, and a click reads it. Null in other reader modes.
++abstract final class PageColumn {
++  static double? width;
++}
++
++/// Lets clicks over the page column pass by [child] (the tap zones) to the page below.
++class PageColumnCutout extends SingleChildRenderObjectWidget {
++  const PageColumnCutout({super.key, required this.enabled, super.child});
++
++  final bool enabled;
++
++  @override
++  RenderObject createRenderObject(BuildContext context) =>
++      RenderPageColumnCutout(enabled);
++
++  @override
++  void updateRenderObject(
++    BuildContext context,
++    RenderPageColumnCutout renderObject,
++  ) => renderObject.enabled = enabled;
++}
++
++class RenderPageColumnCutout extends RenderProxyBox {
++  RenderPageColumnCutout(this.enabled);
++
++  bool enabled;
++
++  @override
++  bool hitTest(BoxHitTestResult result, {required Offset position}) {
++    final column = PageColumn.width;
++    if (enabled && column != null) {
++      final left = (size.width - column) / 2;
++      if (position.dx >= left && position.dx <= left + column) return false;
++    }
++    return super.hitTest(result, position: position);
++  }
++}
+diff --git a/lib/src/features/manga_book/presentation/reader/widgets/reader_wrapper.dart b/lib/src/features/manga_book/presentation/reader/widgets/reader_wrapper.dart
+index ba4c8caa..88269f4c 100644
+--- a/lib/src/features/manga_book/presentation/reader/widgets/reader_wrapper.dart
++++ b/lib/src/features/manga_book/presentation/reader/widgets/reader_wrapper.dart
+@@ -49,6 +49,7 @@ import 'chrome/reader_settings_dialog.dart';
+ import 'directional_swipe_gesture_handler.dart';
+ import 'reader_chapter_gap_warning.dart';
+ import 'reader_gesture_state.dart';
++import 'reader_navigation_layout/page_column_cutout.dart';
+ import 'reader_navigation_layout/reader_navigation_layout.dart';
+ 
+ export 'reader_gesture_state.dart';
+@@ -1300,12 +1301,16 @@ class ReaderView extends HookConsumerWidget {
+         // display-only there.
+         IgnorePointer(
+           ignoring: childHandlesGestures,
+-          child: ReaderNavigationLayoutWidget(
+-            onNext: onNext,
+-            onPrevious: onPrevious,
+-            navigationLayout: resolvedNavigationLayout,
+-            tapInvert: resolvedTapInvert,
+-            showReaderLayoutAnimation: showZonesOnOpen,
++          // manga-stack: in the long strip only the margins beside the page are tap zones.
++          child: PageColumnCutout(
++            enabled: !isPagedReaderMode(resolvedReaderMode),
++            child: ReaderNavigationLayoutWidget(
++              onNext: onNext,
++              onPrevious: onPrevious,
++              navigationLayout: resolvedNavigationLayout,
++              tapInvert: resolvedTapInvert,
++              showReaderLayoutAnimation: showZonesOnOpen,
++            ),
+           ),
+         ),
+       ],
