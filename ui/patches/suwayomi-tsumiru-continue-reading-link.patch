@@ -1,0 +1,209 @@
+diff --git a/lib/src/widgets/manga_cover/grid/manga_cover_grid_tile.dart b/lib/src/widgets/manga_cover/grid/manga_cover_grid_tile.dart
+index f6f763c5..5aadb05f 100644
+--- a/lib/src/widgets/manga_cover/grid/manga_cover_grid_tile.dart
++++ b/lib/src/widgets/manga_cover/grid/manga_cover_grid_tile.dart
+@@ -322,6 +322,7 @@ class _MangaCoverGridTileState extends State<MangaCoverGridTile> {
+               bottom: 6,
+               child: ContinueReadingButton(
+                 onPressed: widget.onContinueReading!,
++                manga: widget.manga, // manga-stack
+               ),
+             ),
+           if (widget.showBadges && widget.manga != null)
+@@ -354,6 +355,7 @@ class _MangaCoverGridTileState extends State<MangaCoverGridTile> {
+     trailing: widget.onContinueReading != null
+         ? ContinueReadingButton(
+             onPressed: widget.onContinueReading!,
++            manga: widget.manga, // manga-stack
+             size: 28,
+             iconSize: 16,
+           )
+diff --git a/lib/src/widgets/manga_cover/list/manga_cover_list_tile.dart b/lib/src/widgets/manga_cover/list/manga_cover_list_tile.dart
+index 59adad60..f835345a 100644
+--- a/lib/src/widgets/manga_cover/list/manga_cover_list_tile.dart
++++ b/lib/src/widgets/manga_cover/list/manga_cover_list_tile.dart
+@@ -177,6 +177,7 @@ class _MangaCoverListTileState extends State<MangaCoverListTile> {
+                   padding: KEdgeInsets.h8.size,
+                   child: ContinueReadingButton(
+                     onPressed: widget.onContinueReading!,
++                    manga: widget.manga, // manga-stack
+                     size: 28,
+                   ),
+                 ),
+diff --git a/lib/src/widgets/manga_cover/widgets/continue_reading_button.dart b/lib/src/widgets/manga_cover/widgets/continue_reading_button.dart
+index 6a0fc98c..6d239bc8 100644
+--- a/lib/src/widgets/manga_cover/widgets/continue_reading_button.dart
++++ b/lib/src/widgets/manga_cover/widgets/continue_reading_button.dart
+@@ -7,37 +7,51 @@
+ import 'package:fluentui_system_icons/fluentui_system_icons.dart';
+ import 'package:material_ui/material_ui.dart';
+ 
++import '../../../features/manga_book/domain/manga/manga_model.dart';
++import '../../../routes/router_config.dart';
+ import '../../../utils/extensions/custom_extensions.dart';
++import '../../web_route_link.dart';
+ 
+ /// Its InkWell consumes the tap so opening the reader does not also open details.
+ class ContinueReadingButton extends StatelessWidget {
+   const ContinueReadingButton({
+     super.key,
+     required this.onPressed,
++    this.manga,
+     this.size = 32,
+     this.iconSize = 20,
+   });
+ 
+   final VoidCallback onPressed;
++
++  /// manga-stack: on the web, the button is a link to the next unread chapter of [manga]. So a
++  /// middle click or a Ctrl+click opens the reader in a new tab.
++  final MangaDto? manga;
+   final double size;
+   final double iconSize;
+ 
+   @override
+   Widget build(BuildContext context) {
+     final scheme = context.theme.colorScheme;
+-    return Material(
+-      color: scheme.primaryContainer.withValues(alpha: 0.9),
+-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+-      clipBehavior: Clip.antiAlias,
+-      elevation: 2,
+-      child: InkWell(
+-        onTap: onPressed,
+-        child: SizedBox.square(
+-          dimension: size,
+-          child: Icon(
+-            FluentIcons.play_24_regular,
+-            size: iconSize,
+-            color: scheme.onPrimaryContainer,
++    final chapter = manga?.user.firstUnreadChapter;
++    return WebRouteLink(
++      location: chapter == null
++          ? null
++          : ReaderRoute(mangaId: manga!.id, chapterId: chapter.id).location,
++      builder: (context, openInNewTab) => Material(
++        color: scheme.primaryContainer.withValues(alpha: 0.9),
++        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
++        clipBehavior: Clip.antiAlias,
++        elevation: 2,
++        child: InkWell(
++          onTap: () => WebRouteLink.handleTap(openInNewTab, onPressed),
++          child: SizedBox.square(
++            dimension: size,
++            child: Icon(
++              FluentIcons.play_24_regular,
++              size: iconSize,
++              color: scheme.onPrimaryContainer,
++            ),
+           ),
+         ),
+       ),
+diff --git a/lib/src/widgets/web_route_link.dart b/lib/src/widgets/web_route_link.dart
+index 4a5bfafa..c254bac8 100644
+--- a/lib/src/widgets/web_route_link.dart
++++ b/lib/src/widgets/web_route_link.dart
+@@ -7,11 +7,12 @@
+ import 'dart:async';
+ 
+ import 'package:flutter/foundation.dart';
++import 'package:flutter/scheduler.dart';
+ import 'package:flutter/services.dart';
+ import 'package:material_ui/material_ui.dart';
+ import 'package:url_launcher/link.dart';
+ 
+-class WebRouteLink extends StatelessWidget {
++class WebRouteLink extends StatefulWidget {
+   const WebRouteLink({
+     super.key,
+     required this.location,
+@@ -45,18 +46,84 @@ class WebRouteLink extends StatelessWidget {
+     }
+   }
+ 
++  @override
++  State<WebRouteLink> createState() => _WebRouteLinkState();
++}
++
++// manga-stack: a link inside another link. The outer <a> covers the whole outer widget, so
++// the browser never sees the <a> of the inner link. Thus the inner link makes no <a>. While the
++// mouse is over it, the outer <a> takes its location. A middle click or a Ctrl+click then opens
++// the inner location.
++class _WebRouteLinkState extends State<WebRouteLink> {
++  /// The location of the inner link under the mouse, and that link.
++  String? _lentLocation;
++  _WebRouteLinkState? _lentBy;
++
++  /// The outer link, when this link is inside one.
++  _WebRouteLinkState? _outer;
++
++  void _lend(_WebRouteLinkState inner, String? location) {
++    if (location == null && _lentBy != inner) return;
++    setState(() {
++      _lentLocation = location;
++      _lentBy = location == null ? null : inner;
++    });
++  }
++
++  @override
++  void dispose() {
++    // An unmounted MouseRegion sends no exit. Take the location back after this frame.
++    final outer = _outer;
++    if (outer != null) {
++      SchedulerBinding.instance.addPostFrameCallback((_) {
++        if (outer.mounted) outer._lend(this, null);
++      });
++    }
++    super.dispose();
++  }
++
+   @override
+   Widget build(BuildContext context) {
+-    final location = this.location;
+-    if (!kIsWeb || !enabled || location == null) {
+-      return builder(context, null);
++    final location = widget.location;
++    if (!kIsWeb || !widget.enabled || location == null) {
++      _outer = null;
++      return widget.builder(context, null);
++    }
++    final scope = context.dependOnInheritedWidgetOfExactType<_LinkScope>();
++    _outer = scope?.link;
++    if (scope != null) {
++      return MouseRegion(
++        onEnter: (_) => scope.link._lend(this, location),
++        onExit: (_) => scope.link._lend(this, null),
++        child: widget.builder(context, scope.followLink),
++      );
+     }
+     return SelectionContainer.disabled(
+       child: Link(
+-        uri: Uri.base.replace(fragment: location),
++        uri: Uri.base.replace(fragment: _lentLocation ?? location),
+         target: LinkTarget.blank,
+-        builder: (context, followLink) => builder(context, followLink),
++        builder: (context, followLink) => _LinkScope(
++          link: this,
++          followLink: followLink,
++          child: widget.builder(context, followLink),
++        ),
+       ),
+     );
+   }
+ }
++
++/// The outer link, for the links inside it.
++class _LinkScope extends InheritedWidget {
++  const _LinkScope({
++    required this.link,
++    required this.followLink,
++    required super.child,
++  });
++
++  final _WebRouteLinkState link;
++  final VoidCallback? followLink;
++
++  @override
++  bool updateShouldNotify(_LinkScope oldWidget) =>
++      link != oldWidget.link || followLink != oldWidget.followLink;
++}

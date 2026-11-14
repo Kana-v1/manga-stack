@@ -48,10 +48,12 @@ On conflict, these win over this doc and over skills that paraphrase them.
 | `scripts/build-ui.ts` | how Tsumiru is cloned and built, and its revision string |
 | `scripts/build-server.ts` | how the server release is downloaded, checked and installed |
 | `scripts/start.ts`, `stop.ts`, `restart.ts`, `readahead.ts` | process handling (processes found by their command line), readiness checks |
-| `readahead/*.py` | what a pass does (`background.py`), what it picks (`planner.py`), what it may delete (`owned.py`, `cleanup.py`), page handling (`pages.py`), the download-folder naming (`suwayomi.py`) |
+| `readahead/*.py` | what a pass does (`background.py`), what it picks (`planner.py`), what it may delete (`download_record.py`, `cleanup.py`), page handling (`pages.py`), the download-folder naming (`suwayomi.py`) |
 | `ui/patches/suwayomi-tsumiru-reader-html-images.patch` | the `<img>` rendering of reader pages |
 | `ui/patches/suwayomi-tsumiru-upscaled-mark.patch` | the "HD" mark on upscaled chapters in the chapter list |
-| `ui/patches/suwayomi-tsumiru-bubble-text.patch`, `...-click-scroll-stops.patch` | the bubble boxes, and where a forward click stops |
+| `ui/patches/suwayomi-tsumiru-bubble-text.patch`, `...-click-scroll-stops.patch` | the bubble boxes, where a forward click stops, and its mark |
+| `ui/patches/suwayomi-tsumiru-continue-reading-link.patch` | the continue-reading button as a link (nested `WebRouteLink`s) |
+| `ui/patches/suwayomi-tsumiru-library-refresh.patch` | the periodic and the forced reload of the library's read progress |
 | `.claude/skills/stack-doctor/references/expected-config.md` | the intended server settings |
 | `ui/clone.ts` `lintPatch()` | the patch lint rules |
 
@@ -67,7 +69,7 @@ The seams where drift is silent. Check both sides when touching either.
 | revision `TSUMIRU_VERSION+<sha256 of the patches, 8 chars>` | `scripts/lib.ts expectedRevision()` (one place) <-> the `revision` file in `<data>/webUI` that `build-ui.ts` wrote | `doctor` reports a pending build forever, or never |
 | unsaved clone edits stop a reset | `ui/clone.ts unsaved()` <-> `applySeries()` (`ui/apply.ts`, `build-ui.ts`) and `patch-tool.ts workon/reset`, which reset the clone | edits that are in no patch get wiped |
 | download folder naming | server `SafePath.buildValidFilename` <-> `readahead/suwayomi.py safe_name` | jobs fail with "download folder not found" after a server upgrade |
-| the record of readahead's downloads | `owned.add` before every download it starts (`jobs.py`) <-> `cleanup.py`, which deletes only recorded downloads | a download it made is never cleaned up (not recorded), or one it did not make is deleted (recorded wrongly) |
+| the record of readahead's downloads | `download_record.add` before every download it starts (`jobs.py`) <-> `cleanup.py`, which deletes only recorded downloads | a download it made is never cleaned up (not recorded), or one it did not make is deleted (recorded wrongly) |
 | readahead's port 8765 | `READAHEAD_PORT` in `stack.conf` <-> `_readaheadPort` in the bubble-text patch | the reader shows no bubble boxes |
 | the text file of a chapter (`/api/ocr`): `pages[].index`, `regions[].box` (fractions), `pages[].panels` (fractions) | `readahead/ocr.py read_chapter` and `ads.py shift` <-> `bubble_text_layer.dart _fetch` | no bubble boxes, or clicks that stop in the wrong place |
 | the tag key `manga_stack_upscaled` | `readahead/tags.py KEY` <-> `isUpscaled` in the upscaled-mark patch | the "HD" mark never shows |

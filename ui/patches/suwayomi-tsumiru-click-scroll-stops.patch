@@ -1,14 +1,15 @@
 diff --git a/lib/src/constants/db_keys.dart b/lib/src/constants/db_keys.dart
-index 9da1c7d1..aeb69ccb 100644
+index 9da1c7d1..6d7f0160 100644
 --- a/lib/src/constants/db_keys.dart
 +++ b/lib/src/constants/db_keys.dart
-@@ -236,6 +236,9 @@ enum DBKeys {
+@@ -236,6 +236,10 @@ enum DBKeys {
    cropBordersWebtoon(false),
    smoothAutoScroll(true),
    readerScrollAmount(ReaderScrollAmount.large),
 +  // manga-stack: click_scroll_stops.dart
 +  clickScrollStops(true),
 +  clickScrollLinePercent(35),
++  clickScrollMark(true),
    autoScrollIntervalSeconds(3),
    autoAdvanceIntervalSeconds(5),
    readerBackgroundColor(ReaderBackgroundColor.black),
@@ -33,7 +34,7 @@ index 7bc93ebf..cec2620b 100644
            controlAffinity: ListTileControlAffinity.trailing,
            title: Text(context.l10n.animatePageTransitions),
 diff --git a/lib/src/features/manga_book/presentation/reader/widgets/reader_mode/infinity_continuous/bubble_text_layer.dart b/lib/src/features/manga_book/presentation/reader/widgets/reader_mode/infinity_continuous/bubble_text_layer.dart
-index ecca96cc..de7640b9 100644
+index a935d471..ac04629f 100644
 --- a/lib/src/features/manga_book/presentation/reader/widgets/reader_mode/infinity_continuous/bubble_text_layer.dart
 +++ b/lib/src/features/manga_book/presentation/reader/widgets/reader_mode/infinity_continuous/bubble_text_layer.dart
 @@ -13,6 +13,7 @@ import 'package:material_ui/material_ui.dart';
@@ -91,11 +92,12 @@ index ecca96cc..de7640b9 100644
      }
      return text;
    } catch (_) {
-@@ -97,13 +116,20 @@ class BubbleTextLayer extends HookWidget {
+@@ -97,13 +116,22 @@ class BubbleTextLayer extends HookWidget {
      final text = useFuture(
        useMemoized(() => _chapterText(chapterId), [chapterId]),
      );
 -    final bubbles = text.data?[pageIndex];
+-    // Always a Stack, so the page image keeps its element when the text arrives.
 +    final page = text.data?[pageIndex];
 +    final bubbles = page?.bubbles;
 +    // The page's stops for the click-scroll, while it is mounted.
@@ -104,9 +106,11 @@ index ecca96cc..de7640b9 100644
 +      ScrollStops.set(context, page.stops);
 +      return () => ScrollStops.remove(context);
 +    }, [page]);
-     // Always a Stack, so the page image keeps its element when the text arrives.
++    // Always a Stack, so the page image keeps its element when the text arrives. No clip: the
++    // stop mark is beside the page.
      return Stack(
        fit: StackFit.passthrough,
++      clipBehavior: Clip.none,
        children: [
          child,
 -        if (bubbles != null)
@@ -114,21 +118,75 @@ index ecca96cc..de7640b9 100644
            Positioned.fill(
              child: LayoutBuilder(
                builder: (context, size) => Stack(
+@@ -120,11 +148,47 @@ class BubbleTextLayer extends HookWidget {
+               ),
+             ),
+           ),
++        // The mark of the next click-scroll stop, when it is on this page.
++        if (page != null)
++          Positioned.fill(
++            child: IgnorePointer(
++              child: ValueListenableBuilder(
++                valueListenable: ScrollStops.marked,
++                builder: (_, marked, _) => marked?.page == context
++                    ? _StopMark(page: page, index: marked!.index)
++                    : const SizedBox.shrink(),
++              ),
++            ),
++          ),
+       ],
+     );
+   }
+ }
+ 
++/// Marks stop [index] of [page] (see _PageText.stops) with bars beside the page.
++class _StopMark extends StatelessWidget {
++  const _StopMark({required this.page, required this.index});
++
++  final _PageText page;
++  final int index;
++
++  @override
++  Widget build(BuildContext context) => LayoutBuilder(
++    builder: (context, size) => Stack(
++      clipBehavior: Clip.none,
++      children: [
++        Positioned(
++          left: 0,
++          right: 0,
++          top: page.stops[index] * size.maxHeight - stopBarThickness / 2,
++          height: stopBarThickness,
++          child: const StopEdgeBars(),
++        ),
++      ],
++    ),
++  );
++}
++
+ /// Invisible until the mouse is over it; a click copies the text.
+ class _BubbleBox extends HookConsumerWidget {
+   const _BubbleBox({required this.text});
 diff --git a/lib/src/features/manga_book/presentation/reader/widgets/reader_mode/infinity_continuous/click_scroll_stops.dart b/lib/src/features/manga_book/presentation/reader/widgets/reader_mode/infinity_continuous/click_scroll_stops.dart
 new file mode 100644
-index 00000000..8bb48f93
+index 00000000..d18b108a
 --- /dev/null
 +++ b/lib/src/features/manga_book/presentation/reader/widgets/reader_mode/infinity_continuous/click_scroll_stops.dart
-@@ -0,0 +1,108 @@
+@@ -0,0 +1,323 @@
 +// manga-stack: in the long strip, a click (or key) that scrolls forward stops at the next speech
 +// bubble or panel. Without this, it always moves the same share of the screen. Everything above
 +// the reading line counts as read. The first stop below the line moves to just under the top
 +// edge. A click never moves further than the scroll amount of the reader. So art without stops
 +// moves at the usual speed, and nothing is skipped. The stops come from readahead
 +// (/api/ocr): bubble boxes and panel tops, as fractions of each page (bubble_text_layer.dart).
++//
++// A mark shows where the next click stops: two short bars, in the margins at the left and right
++// of the page column. They are at the top of the next bubble or panel. When no stop is in reach,
++// they are where the full scroll amount ends. The marked line is the line that moves to the top.
 +
 +import 'dart:math' as math;
 +
++import 'package:flutter/scheduler.dart';
++import 'package:flutter_hooks/flutter_hooks.dart';
 +import 'package:hooks_riverpod/hooks_riverpod.dart';
 +import 'package:material_ui/material_ui.dart';
 +
@@ -139,6 +197,11 @@ index 00000000..8bb48f93
 +
 +/// Room left above the stop, as a share of the screen.
 +const _topMargin = 0.04;
++
++/// The bars of the mark: length, thickness and space from the page, in pixels.
++const _barLength = 20.0;
++const _barThickness = 3.0;
++const _barGap = 6.0;
 +
 +final clickScrollStopsProvider = NotifierProvider<ClickScrollStops, bool?>(
 +  ClickScrollStops.new,
@@ -161,38 +224,232 @@ index 00000000..8bb48f93
 +  int? build() => initialize(DBKeys.clickScrollLinePercent);
 +}
 +
++/// Whether a mark shows where the next forward click stops.
++final clickScrollMarkProvider = NotifierProvider<ClickScrollMark, bool?>(
++  ClickScrollMark.new,
++);
++
++class ClickScrollMark extends Notifier<bool?>
++    with SharedPreferenceClientMixin<bool> {
++  @override
++  bool? build() => initialize(DBKeys.clickScrollMark);
++}
++
++/// A stop of one page: the page (the key in [ScrollStops]) and the index in its list of stops.
++typedef PageStop = ({BuildContext page, int index});
++
 +/// The stops of the pages on the screen (and just outside it), as fractions of the height of
 +/// each page. The key is the element of the page. A page registers its stops while it is mounted.
 +abstract final class ScrollStops {
 +  static final _pages = <BuildContext, List<double>>{};
 +
-+  static void set(BuildContext page, List<double> stops) =>
-+      _pages[page] = stops;
++  /// The stop that the next forward click brings to the top. The page that has it draws the
++  /// mark. Null when no stop is in reach, or when the mark is off.
++  static final marked = ValueNotifier<PageStop?>(null);
 +
-+  static void remove(BuildContext page) => _pages.remove(page);
++  /// Called when a page adds or removes its stops. [NextStopMarks] sets it.
++  static VoidCallback? _onChange;
 +
-+  /// How far to scroll forward from [position], at most [step] pixels. The scroll brings the
-+  /// first stop below the reading line ([line], a share of the screen) to just under the top edge.
-+  static double next(ScrollPosition position, double step, double line) {
++  static void set(BuildContext page, List<double> stops) {
++    _pages[page] = stops;
++    _onChange?.call();
++  }
++
++  static void remove(BuildContext page) {
++    _pages.remove(page);
++    _onChange?.call();
++  }
++
++  /// The stop that a forward click from [position] brings to just under the top edge, and how
++  /// far that click scrolls. It is the first stop below the reading line ([line], a share of
++  /// the screen). Null when that stop is more than [step] pixels away, or when there is none.
++  static ({PageStop stop, double offset})? find(
++    ScrollPosition position,
++    double step,
++    double line,
++  ) {
 +    final viewport = position.context.storageContext.findRenderObject();
-+    if (viewport is! RenderBox || !viewport.hasSize) return step;
++    if (viewport is! RenderBox || !viewport.hasSize) return null;
 +    final height = viewport.size.height;
-+    double? nearest;
++    ({PageStop stop, double y})? nearest;
 +    for (final MapEntry(key: page, value: stops) in _pages.entries) {
 +      final box = page.mounted ? page.findRenderObject() : null;
 +      if (box is! RenderBox || !box.attached || !box.hasSize) continue;
-+      for (final stop in stops) {
++      for (final (index, stop) in stops.indexed) {
 +        // The stop in the viewport's own coordinates, which are scroll pixels.
 +        final y = viewport
 +            .globalToLocal(box.localToGlobal(Offset(0, stop * box.size.height)))
 +            .dy;
-+        if (y > height * line && (nearest == null || y < nearest)) nearest = y;
++        if (y > height * line && (nearest == null || y < nearest.y)) {
++          nearest = (stop: (page: page, index: index), y: y);
++        }
 +      }
 +    }
-+    if (nearest == null) return step;
-+    return math.min(step, nearest - height * _topMargin);
++    if (nearest == null) return null;
++    final offset = nearest.y - height * _topMargin;
++    if (offset > step) return null;
++    return (stop: nearest.stop, offset: offset);
++  }
++
++  /// How far to scroll forward from [position], at most [step] pixels (see [find]).
++  static double next(ScrollPosition position, double step, double line) =>
++      find(position, step, line)?.offset ?? step;
++}
++
++/// Shows where the next forward click stops. A page marks its own stop (bubble_text_layer.dart),
++/// so the mark moves with the page. This widget marks the end of the full scroll amount, when
++/// no stop is in reach. [child] is
++/// the list of the long strip.
++class NextStopMarks extends HookConsumerWidget {
++  const NextStopMarks({
++    super.key,
++    required this.position,
++    required this.stepFraction,
++    required this.columnWidth,
++    required this.child,
++  });
++
++  /// The scroll position of the list. Null while the list has none.
++  final ScrollPosition? Function() position;
++
++  /// The scroll amount of the reader, as a share of the screen.
++  final double stepFraction;
++
++  /// The width of the page column, in pixels.
++  final double columnWidth;
++
++  final Widget child;
++
++  @override
++  Widget build(BuildContext context, WidgetRef ref) {
++    final enabled =
++        (ref.watch(clickScrollStopsProvider) ??
++            DBKeys.clickScrollStops.initial as bool) &&
++        (ref.watch(clickScrollMarkProvider) ??
++            DBKeys.clickScrollMark.initial as bool);
++    final line =
++        ref.watch(clickScrollLineProvider) ??
++        DBKeys.clickScrollLinePercent.initial as int;
++    // Where the full scroll amount ends, in pixels from the top. Null when a stop is in reach.
++    final fullStep = useState<double?>(null);
++
++    // 1. Find the next stop. The mark goes on it, or on the end of the full scroll amount.
++    void update() {
++      final pos = position();
++      PageStop? stop;
++      double? full;
++      if (enabled &&
++          pos != null &&
++          pos.hasContentDimensions &&
++          pos.axisDirection == AxisDirection.down) {
++        final step = pos.viewportDimension * stepFraction;
++        final found = ScrollStops.find(pos, step, line / 100);
++        stop = found?.stop;
++        // At the end of the strip, the click moves only to the end.
++        final room = math.min(step, pos.maxScrollExtent - pos.pixels);
++        if (found == null && room > 1) full = room;
++      }
++      ScrollStops.marked.value = stop;
++      fullStep.value = full;
++    }
++
++    // 2. Do the update after the layout of the frame, because it reads the positions of the
++    //    pages. Many requests in one frame give one update.
++    final latestUpdate = useRef(update);
++    latestUpdate.value = update;
++    final scheduled = useRef(false);
++    final schedule = useCallback(() {
++      if (scheduled.value) return;
++      scheduled.value = true;
++      SchedulerBinding.instance.addPostFrameCallback((_) {
++        scheduled.value = false;
++        if (context.mounted) latestUpdate.value();
++      });
++      SchedulerBinding.instance.ensureVisualUpdate();
++    }, const []);
++
++    // 3. Update when pages add or remove stops, when the list scrolls or changes size, and
++    //    after each build (a setting can change).
++    useEffect(() {
++      ScrollStops._onChange = schedule;
++      return () => ScrollStops._onChange = null;
++    }, const []);
++    schedule();
++
++    return Stack(
++      fit: StackFit.passthrough,
++      children: [
++        NotificationListener<Notification>(
++          onNotification: (notification) {
++            if (notification is ScrollNotification ||
++                notification is ScrollMetricsNotification) {
++              schedule();
++            }
++            return false;
++          },
++          child: child,
++        ),
++        if (fullStep.value case final y?)
++          Positioned(
++            left: 0,
++            right: 0,
++            top: y - _barThickness / 2,
++            height: _barThickness,
++            child: IgnorePointer(
++              child: Center(
++                child: SizedBox(
++                  width: columnWidth,
++                  child: const StopEdgeBars(),
++                ),
++              ),
++            ),
++          ),
++      ],
++    );
 +  }
 +}
++
++/// The mark: a short bar at each side of the page column. Its parent is as wide as the column.
++/// The bars go in the margins beside the column. When a margin is too narrow for a bar, the
++/// bars go on the edges of the page.
++class StopEdgeBars extends StatelessWidget {
++  const StopEdgeBars({super.key});
++
++  @override
++  Widget build(BuildContext context) => LayoutBuilder(
++    builder: (context, size) {
++      final margin = (MediaQuery.sizeOf(context).width - size.maxWidth) / 2;
++      final inset = margin >= _barGap + _barLength
++          ? -(_barGap + _barLength)
++          : 0.0;
++      final bar = ColoredBox(
++        color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.9),
++      );
++      return Stack(
++        clipBehavior: Clip.none,
++        children: [
++          Positioned(
++            left: inset,
++            top: 0,
++            width: _barLength,
++            height: _barThickness,
++            child: bar,
++          ),
++          Positioned(
++            right: inset,
++            top: 0,
++            width: _barLength,
++            height: _barThickness,
++            child: bar,
++          ),
++        ],
++      );
++    },
++  );
++}
++
++/// The thickness of the bars, for a page that places them.
++const stopBarThickness = _barThickness;
 +
 +/// The settings, shown with the long strip's scroll amount.
 +class ClickScrollStopsSettings extends ConsumerWidget {
@@ -206,6 +463,9 @@ index 00000000..8bb48f93
 +    final line =
 +        ref.watch(clickScrollLineProvider) ??
 +        DBKeys.clickScrollLinePercent.initial as int;
++    final mark =
++        ref.watch(clickScrollMarkProvider) ??
++        DBKeys.clickScrollMark.initial as bool;
 +    return Column(
 +      crossAxisAlignment: CrossAxisAlignment.stretch,
 +      children: [
@@ -215,7 +475,7 @@ index 00000000..8bb48f93
 +          value: enabled,
 +          onChanged: ref.read(clickScrollStopsProvider.notifier).update,
 +        ),
-+        if (enabled)
++        if (enabled) ...[
 +          IntSliderTile(
 +            title: 'Reading line (bubbles above it count as read)',
 +            valueLabel: '$line% of the screen',
@@ -224,12 +484,19 @@ index 00000000..8bb48f93
 +            max: 80,
 +            onChanged: ref.read(clickScrollLineProvider.notifier).update,
 +          ),
++          CompactSwitchListTile(
++            controlAffinity: ListTileControlAffinity.trailing,
++            title: const Text('Mark where the next click stops'),
++            value: mark,
++            onChanged: ref.read(clickScrollMarkProvider.notifier).update,
++          ),
++        ],
 +      ],
 +    );
 +  }
 +}
 diff --git a/lib/src/features/manga_book/presentation/reader/widgets/reader_mode/infinity_continuous/multichapter_continuous_reader_mode.dart b/lib/src/features/manga_book/presentation/reader/widgets/reader_mode/infinity_continuous/multichapter_continuous_reader_mode.dart
-index 54d1ed3c..61e778aa 100644
+index 54d1ed3c..de5f655a 100644
 --- a/lib/src/features/manga_book/presentation/reader/widgets/reader_mode/infinity_continuous/multichapter_continuous_reader_mode.dart
 +++ b/lib/src/features/manga_book/presentation/reader/widgets/reader_mode/infinity_continuous/multichapter_continuous_reader_mode.dart
 @@ -56,6 +56,7 @@ import '../../reader_navigation_layout/page_column_cutout.dart';
@@ -259,3 +526,35 @@ index 54d1ed3c..61e778aa 100644
          final double target = (pos.pixels + offset).clamp(
            pos.minScrollExtent,
            pos.maxScrollExtent,
+@@ -1430,6 +1441,16 @@ class MultiChapterContinuousReaderMode extends HookConsumerWidget {
+           capWidth(buildSeparator(context, index)),
+     );
+ 
++    // manga-stack: the list's scroll position, or null while it has none.
++    ScrollPosition? listPosition() {
++      if (!itemScrollController.isAttached) return null;
++      try {
++        return scrollOffsetController.position;
++      } catch (_) {
++        return null;
++      }
++    }
++
+     // User drags yield until the next interval; exclude guarded programmatic jumps.
+     final autoScrollAwareList = NotificationListener<UserScrollNotification>(
+       onNotification: (notification) {
+@@ -1453,7 +1474,13 @@ class MultiChapterContinuousReaderMode extends HookConsumerWidget {
+             if (!programmaticScroll.value) stripInMotion.value = true;
+             return false;
+           },
+-          child: positionedList,
++          // manga-stack: marks where the next forward click stops (click_scroll_stops.dart).
++          child: NextStopMarks(
++            position: listPosition,
++            stepFraction: scrollAmount.fraction,
++            columnWidth: crossAxisExtent,
++            child: positionedList,
++          ),
+         ),
+       ),
+     );

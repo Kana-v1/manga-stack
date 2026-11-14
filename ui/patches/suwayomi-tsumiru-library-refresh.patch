@@ -1,0 +1,161 @@
+diff --git a/lib/src/features/library/presentation/library/library_screen.dart b/lib/src/features/library/presentation/library/library_screen.dart
+index f6b18511..93d47f6f 100644
+--- a/lib/src/features/library/presentation/library/library_screen.dart
++++ b/lib/src/features/library/presentation/library/library_screen.dart
+@@ -49,6 +49,7 @@ import 'widgets/desktop_library_toolbar.dart';
+ import 'widgets/library_manga_grid_view.dart';
+ import 'widgets/library_manga_organizer.dart';
+ import 'widgets/library_random_entry.dart';
++import 'widgets/library_refresh.dart';
+ import 'widgets/library_sections_view.dart';
+ 
+ /// Keeps the mismatch banner inside the body; [grouped] chooses the provider Retry refreshes.
+@@ -198,6 +199,9 @@ class LibraryScreen extends HookConsumerWidget {
+     final groupType =
+         ref.watch(libraryGroupTypeProvider) ?? kDefaultLibraryGroupType;
+ 
++    // manga-stack: reload the read progress now and then (library_refresh.dart).
++    useLibraryAutoRefresh(ref);
++
+     // Seed from the current socket state; refresh on running→idle and ignore reconnect nulls.
+     final lastRunning = useRef<bool>(
+       ref.read(updateRunningSocketProvider).value ?? false,
+@@ -261,6 +265,7 @@ Widget _desktopLibraryHeader({
+ /// Empty and error states still need the desktop bar; random entry needs a library to pick from.
+ Widget _emptyLibraryTopBarSlot(WidgetRef ref, {required Widget child}) {
+   final trailing = <Widget>[
++    const LibraryRefreshButton(), // manga-stack
+     SyncYomiSyncButton(onSynced: () => _refreshLibraryAfterSync(ref)),
+     UpdateStatusPopupMenu(getCategory: () => null, showDuplicatesButton: true),
+   ];
+@@ -443,6 +448,7 @@ class _DefaultLibraryToggledSearch extends HookConsumerWidget {
+                                   icon: const Icon(FluentIcons.search_24_regular),
+                                 ),
+                               _organizerButton(),
++                              const LibraryRefreshButton(), // manga-stack
+                               SyncYomiSyncButton(
+                                 onSynced: () => _refreshLibraryAfterSync(ref),
+                               ),
+@@ -474,6 +480,7 @@ class _DefaultLibraryToggledSearch extends HookConsumerWidget {
+                   final tabController = DefaultTabController.of(bodyContext);
+                   final trailing = <Widget>[
+                     LibraryRandomEntryButton(libraryContext: bodyContext),
++                    const LibraryRefreshButton(), // manga-stack
+                     SyncYomiSyncButton(
+                       onSynced: () => _refreshLibraryAfterSync(ref),
+                     ),
+@@ -661,6 +668,7 @@ class _DefaultLibraryStickySearch extends HookConsumerWidget {
+                 final tabController = DefaultTabController.of(bodyContext);
+                 final trailing = <Widget>[
+                   LibraryRandomEntryButton(libraryContext: bodyContext),
++                  const LibraryRefreshButton(), // manga-stack
+                   SyncYomiSyncButton(
+                     onSynced: () => _refreshLibraryAfterSync(ref),
+                   ),
+@@ -729,6 +737,7 @@ class _DefaultLibraryStickySearch extends HookConsumerWidget {
+                         : null,
+                     actions: [
+                       _organizerButton(),
++                      const LibraryRefreshButton(), // manga-stack
+                       SyncYomiSyncButton(
+                         onSynced: () => _refreshLibraryAfterSync(ref),
+                       ),
+@@ -975,6 +984,7 @@ class _GroupedLibraryToggledSearch extends HookConsumerWidget {
+                                     ],
+                                   ),
+                             ),
++                            const LibraryRefreshButton(), // manga-stack
+                             SyncYomiSyncButton(
+                               onSynced: () => _refreshLibraryAfterSync(ref),
+                             ),
+@@ -996,6 +1006,7 @@ class _GroupedLibraryToggledSearch extends HookConsumerWidget {
+                         const MigrationSourcePickerRoute().push(context),
+                     icon: const Icon(FluentIcons.arrow_swap_24_regular),
+                   ),
++                  const LibraryRefreshButton(), // manga-stack
+                   SyncYomiSyncButton(
+                     onSynced: () => _refreshLibraryAfterSync(ref),
+                   ),
+@@ -1157,6 +1168,7 @@ class _GroupedLibraryStickySearch extends HookConsumerWidget {
+               builder: (bodyContext) {
+                 final trailing = <Widget>[
+                   LibraryRandomEntryButton(libraryContext: bodyContext),
++                  const LibraryRefreshButton(), // manga-stack
+                   SyncYomiSyncButton(
+                     onSynced: () => _refreshLibraryAfterSync(ref),
+                   ),
+@@ -1244,6 +1256,7 @@ class _GroupedLibraryStickySearch extends HookConsumerWidget {
+                                     ],
+                                   ),
+                             ),
++                      const LibraryRefreshButton(), // manga-stack
+                       SyncYomiSyncButton(
+                         onSynced: () => _refreshLibraryAfterSync(ref),
+                       ),
+diff --git a/lib/src/features/library/presentation/library/widgets/library_refresh.dart b/lib/src/features/library/presentation/library/widgets/library_refresh.dart
+new file mode 100644
+index 00000000..4322caf3
+--- /dev/null
++++ b/lib/src/features/library/presentation/library/widgets/library_refresh.dart
+@@ -0,0 +1,61 @@
++// manga-stack: the library loads its titles once, so chapters read in another tab or on another
++// device do not show until it loads again. This loads the library again every 10 minutes while
++// it is open, and when the browser tab or the app comes back to the front. A toolbar button
++// does it at once. It reads only the library from the server: no update of the sources.
++
++import 'dart:async';
++
++import 'package:fluentui_system_icons/fluentui_system_icons.dart';
++import 'package:flutter_hooks/flutter_hooks.dart';
++import 'package:hooks_riverpod/hooks_riverpod.dart';
++import 'package:material_ui/material_ui.dart';
++
++import '../controller/library_controller.dart';
++import '../controller/library_manga_list.dart';
++
++/// Time between two automatic reloads.
++const _interval = Duration(minutes: 10);
++
++/// A return to the front reloads only when the last reload is at least this old. So a quick
++/// switch between windows does not send a query each time.
++const _minAge = Duration(seconds: 30);
++
++DateTime? _lastRefresh;
++
++/// Loads the titles of the library again, with their read progress.
++void refreshLibrary(WidgetRef ref) {
++  _lastRefresh = DateTime.now();
++  ref.invalidate(libraryMangaListProvider);
++  // Each category tab refreshes too. Otherwise its list sees the new library as a reload of a
++  // dependency, and the tab shows its loading view instead of the covers until the data comes.
++  ref.invalidate(categoryMangaListProvider);
++}
++
++/// The automatic reloads, while the widget that calls this is mounted.
++void useLibraryAutoRefresh(WidgetRef ref) {
++  // 1. Every _interval.
++  useEffect(() {
++    final timer = Timer.periodic(_interval, (_) => refreshLibrary(ref));
++    return timer.cancel;
++  }, const []);
++
++  // 2. When the tab or the app comes back to the front, unless a reload is recent.
++  useOnAppLifecycleStateChange((previous, current) {
++    if (current != AppLifecycleState.resumed) return;
++    final last = _lastRefresh;
++    if (last != null && DateTime.now().difference(last) < _minAge) return;
++    refreshLibrary(ref);
++  });
++}
++
++/// The toolbar button that reloads the library at once.
++class LibraryRefreshButton extends ConsumerWidget {
++  const LibraryRefreshButton({super.key});
++
++  @override
++  Widget build(BuildContext context, WidgetRef ref) => IconButton(
++    tooltip: 'Refresh read progress',
++    onPressed: () => refreshLibrary(ref),
++    icon: const Icon(FluentIcons.arrow_clockwise_24_regular),
++  );
++}

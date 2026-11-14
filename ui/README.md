@@ -25,7 +25,9 @@ ui/
 | `suwayomi-tsumiru-upscaled-mark.patch` | chapter list: an "HD" icon on downloaded chapters with the chapter meta `manga_stack_upscaled`, which readahead sets |
 | `suwayomi-tsumiru-bubble-text.patch` | long strip: invisible boxes over the speech bubbles, from readahead's text recognition (`/api/ocr` on port 8765). A click on one copies its text |
 | `suwayomi-tsumiru-tap-zones-beside-page.patch` | long strip: only the margins beside the page column are tap zones, so a click on the page reaches its bubbles |
-| `suwayomi-tsumiru-click-scroll-stops.patch` | long strip: a forward click or key stops at the next bubble or panel below the reading line, never further than "Scroll amount". Its settings sit next to "Scroll amount" |
+| `suwayomi-tsumiru-click-scroll-stops.patch` | long strip: a forward click or key stops at the next bubble or panel below the reading line, never further than "Scroll amount". A mark shows where the next click stops: two short bars in the margins beside the page, at the top of the next bubble or panel, or where the full scroll amount ends. Its settings sit next to "Scroll amount" |
+| `suwayomi-tsumiru-continue-reading-link.patch` | library: the continue-reading button on a cover is a link to the next unread chapter, so a middle click or Ctrl+click opens the reader in a new tab. A link inside another link (`WebRouteLink`) lends its location to the outer `<a>` while the mouse is over it |
+| `suwayomi-tsumiru-library-refresh.patch` | library: reloads the titles and their read progress every 10 minutes while it is open, and when the tab comes back to the front (at most every 30 s). A toolbar button ("Refresh read progress") reloads at once. No source update |
 
 ## Building
 
