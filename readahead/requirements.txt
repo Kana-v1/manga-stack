@@ -1,0 +1,13 @@
+# Installed by scripts/build-readahead.ts after torch (which comes from TORCH_INDEX).
+# Versions are the ones tested together.
+spandrel==0.4.2
+pillow==13.0.0
+numpy==2.5.4
+pydantic==2.14.3
+# code checks (pyproject.toml)
+ruff==0.17.4
+mypy==2.4.1
+# text recognition (ocr.py): loads the detector and PaddleOCR-VL
+transformers==5.22.2
+huggingface_hub==1.33.0
+tokenizers==0.23.3
