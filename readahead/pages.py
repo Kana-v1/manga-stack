@@ -165,12 +165,15 @@ def run_model(rgb: Pixels) -> Pixels:
     t = t.unsqueeze(0)  # -> 1 x 3 x H x W: a batch of 1 image
     t = t.to(dtype).div_(255)  # bytes 0..255 -> numbers 0..1 (fp16)
 
-    # 2. The model. inference_mode: no record for training, which saves memory and time.
+    # Steps 2 and 3 are in inference_mode: no record for training, which saves memory and time.
+    # PyTorch lets a tensor made in this mode change in place (clamp_, mul_) only in this mode.
     with torch.inference_mode():
+        # 2. The model.
         out = model(t)  # 1 x 3 x 2H x 2W, numbers about 0..1
-    # 3. Back to bytes. The model can give a little below 0 or above 1: clamp_ cuts that off.
-    #    Then 0..1 -> 0..255, rounded to whole numbers. (A name with _ changes t in place.)
-    out = out.clamp_(0, 1).mul_(255).round_().to(torch.uint8)
+        # 3. Back to bytes. The model can give a little below 0 or above 1: clamp_ cuts that
+        #    off. Then 0..1 -> 0..255, rounded to whole numbers. (A name with _ changes the
+        #    tensor in place.)
+        out = out.clamp_(0, 1).mul_(255).round_().to(torch.uint8)
 
     # 4. Back to the layout of step 1, reversed, in normal memory: 2H x 2W x 3.
     out = out.squeeze(0)  # remove the batch of 1: 3 x 2H x 2W
