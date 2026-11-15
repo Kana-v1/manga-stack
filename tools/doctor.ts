@@ -256,6 +256,9 @@ async function readahead() {
     const health: any = await (await fetch(`${READAHEAD_URL}/health`, { signal: AbortSignal.timeout(3000) })).json();
     const running = health.passRunning ? " (a pass is running)" : "";
     ok(`running: ${health.model} on ${health.device}; next pass due ${health.nextPassDue}${running}`);
+    // Jobs that failed since readahead started, until a later pass does them again.
+    const failed = (health.jobs ?? []).filter((j: any) => j.state === "error");
+    if (failed.length) warn(`${failed.length} failed job(s) since ${health.started}: scripts/readahead.ts status`);
   } catch {
     warn("not running: scripts/readahead.ts start (or scripts/start.ts)");
   }
