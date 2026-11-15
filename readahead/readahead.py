@@ -7,7 +7,7 @@ POST /api/pass                         a pass now: library update, delete those 
                                        queue those chapters, fix the tags of the chapter list
 GET  /api/chapter-status?chapterId=N[&kind=text]  the job of a chapter: idle, queued, ..., done or error
 GET  /api/ocr?chapterId=N              the recognised text of a chapter, for the bubble boxes of the reader
-GET  /health                           the model, and the last and next pass
+GET  /health                           the model, the last and next pass, and the unfinished jobs
 
 Passes also run every READAHEAD_INTERVAL_MINUTES. Each pass adds a line to the pass history.
 
@@ -39,6 +39,7 @@ import json
 import logging
 import os
 import threading
+import time
 from collections.abc import Callable
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
@@ -59,6 +60,9 @@ log = logging.getLogger("readahead")
 READER_ORIGINS = {f"http://{host}:{urlsplit(SERVER_URL).port}" for host in ("127.0.0.1", "localhost")}
 
 
+STARTED = history.stamp(time.time())  # when this process started
+
+
 def health() -> Health:
     last = history.recent(1)
     if not INTERVAL_MINUTES:
@@ -73,6 +77,8 @@ def health() -> Health:
         pass_running=background.running.locked(),
         last_pass=last[0] if last else None,
         next_pass_due=next_pass,
+        started=STARTED,
+        jobs=jobs.unfinished(),
     )
 
 

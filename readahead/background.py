@@ -118,9 +118,9 @@ def run_pass() -> PassResult:
     queued = [job(t, c) for t in plan for c in t.upscale if not c.done]
     text = [job(t, c) for t in plan for c in t.text]
     for q in queued:
-        jobs.enqueue(q.id, "upscale")
+        jobs.enqueue(q.id, "upscale", q.chapter)
     for q in text:
-        jobs.enqueue(q.id, "text")
+        jobs.enqueue(q.id, "text", q.chapter)
     log.info("pass: %d chapters queued to upscale, %d to read the text of", len(queued), len(text))
 
     # 4. Make the "HD" marks of the chapter list agree with the files. A chapter gets a mark only

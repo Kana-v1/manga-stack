@@ -148,10 +148,11 @@ class Job(Struct):
 
 
 class JobStatus(Job):
-    """A chapter's job, as /api/chapter-status answers."""
+    """A chapter's job, as /api/chapter-status and /health answer."""
 
     chapter_id: int
     kind: Kind
+    chapter: str | None = None  # "<title> <chapter name>", when the job knows it
 
 
 # ---------------------------------------------------------------- the pass history
@@ -189,6 +190,10 @@ class Health(Struct):
     pass_running: bool
     last_pass: HistoryEntry | None
     next_pass_due: str  # a local time, "now", or "off"
+    started: str  # when this readahead process started, as local time
+    # The jobs that are queued, running, or failed since the start. A failed job stays here
+    # until a later pass does it again.
+    jobs: list[JobStatus]
 
 
 # ---------------------------------------------------------------- a chapter's text (ocr.py)

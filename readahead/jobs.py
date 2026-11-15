@@ -30,6 +30,7 @@ from datatypes import ChapterText, Job, JobStatus, Kind, State
 log = logging.getLogger("readahead")
 RUNNING: tuple[State, ...] = ("queued", "downloading", "upscaling", "reading")  # not finished yet
 jobs: dict[tuple[Kind, int], Job] = {}  # (kind, chapter id) -> its job
+names: dict[int, str] = {}  # chapter id -> "<title> <chapter name>", for the status
 work: queue.Queue[tuple[Kind, int]] = queue.Queue()  # (kind, chapter id), in the order queued
 lock = threading.Lock()  # passes queue jobs from the threads of the HTTP server and the scheduler
 
@@ -39,15 +40,28 @@ lock = threading.Lock()  # passes queue jobs from the threads of the HTTP server
 
 def status(chapter_id: int, kind: Kind = "upscale") -> JobStatus:
     job = jobs.get((kind, chapter_id), Job(state="idle"))
-    return JobStatus(chapter_id=chapter_id, kind=kind, state=job.state, message=job.message)
+    return JobStatus(
+        chapter_id=chapter_id, kind=kind, state=job.state, message=job.message, chapter=names.get(chapter_id)
+    )
+
+
+def unfinished() -> list[JobStatus]:
+    """The jobs that are queued, running or failed, in the order they were first queued."""
+    # The lock: enqueue() adds keys under it, and a dict must not grow while it is copied.
+    with lock:
+        keys = list(jobs)
+    return [status(chapter_id, kind) for kind, chapter_id in keys if jobs[(kind, chapter_id)].state != "done"]
 
 
 def running(chapter_id: int, kind: Kind = "upscale") -> bool:
     return status(chapter_id, kind).state in RUNNING
 
 
-def enqueue(chapter_id: int, kind: Kind = "upscale") -> None:
-    """Queue a job for the chapter, unless one of that kind is queued or running."""
+def enqueue(chapter_id: int, kind: Kind = "upscale", chapter: str | None = None) -> None:
+    """Queue a job for the chapter, unless one of that kind is queued or running. `chapter` is
+    its name, for the status."""
+    if chapter:
+        names[chapter_id] = chapter
     # The lock makes the check and the queueing one step. Without it, two threads could both
     # find the chapter not running, and both queue it. The queue itself needs no lock.
     with lock:
@@ -87,6 +101,7 @@ def upscale(chapter_id: int) -> None:
         # downloaded it since then.
         ch = suwayomi.chapter(chapter_id)
         name = f"{ch.manga.title} {ch.name}"
+        names[chapter_id] = name
 
         # 1. Download the chapter, unless the server has it.
         if not ch.is_downloaded:

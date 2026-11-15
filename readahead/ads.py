@@ -268,7 +268,7 @@ def find_gaps(gray: npt.NDArray[np.uint8], min_rows: int) -> list[Rows]:
     max_off_median = width * OFF_MEDIAN_SHARE
     # Each count against that limit: one True or False per row, e.g. [True, True, False].
     # In other words: True where at least 99.8% of the row is one colour.
-    blank = off_median_pixels <= max_off_median
+    blank_rows = off_median_pixels <= max_off_median
 
     # 2. The runs of such rows that are long enough. groupby() splits the rows into runs of
     #    rows with the same value: blank rows, then not blank ones, and so on.
@@ -281,13 +281,13 @@ def find_gaps(gray: npt.NDArray[np.uint8], min_rows: int) -> list[Rows]:
 
     #  runs = (is_blank, length) of each run:
     #           (False, 2)       (True, 3)       (False, 2)    (True, 1)
-    runs = itertools.groupby(blank)
+    runs = itertools.groupby(blank_rows)
 
     for is_blank, run in runs:
-        length = sum(1 for _ in run)
-        if is_blank and length >= min_rows:
-            gaps.append(Rows(y, y + length))
-        y += length
+        num_rows = sum(1 for _ in run)
+        if is_blank and num_rows >= min_rows:
+            gaps.append(Rows(y, y + num_rows))
+        y += num_rows
     return gaps
 
 
