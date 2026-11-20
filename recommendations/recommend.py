@@ -196,6 +196,12 @@ def user2user_CF(
         return (top_k_preds, top_k_scores)
 
     S = calc_similarities()
+    
+    # filter out neighbors that aren't similar to each user 
+    top_neighbors  = np.quantile(S, 0.999, axis=1, keepdims=True, method='nearest')
+    S[S < top_neighbors] = 0 
+    # print(np.count_nonzero(S, axis=1))
+    
     top_k_predictions, top_k_scores = calc_top_k_predictions(S)
 
     users = []
