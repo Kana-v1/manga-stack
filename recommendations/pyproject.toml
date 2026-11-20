@@ -1,0 +1,31 @@
+# Settings for readahead's code checks. Run from readahead folder:
+#   .venv/bin/ruff check . && .venv/bin/ruff format --check .    (lint, formatting)
+#   .venv/bin/mypy .                                              (types)
+
+[tool.ruff]
+line-length = 110
+
+[tool.ruff.lint]
+# ANN: every function declares the types of its arguments and what it returns; ANN401 forbids
+# `Any`, the type that switches type checking off.
+extend-select = ["ANN"]
+
+[tool.mypy]
+strict = true                 # every function typed; no implicit Any slipping through calls
+disallow_any_explicit = true  # `Any` may not be written anywhere
+# transformers declares some of its functions without types; calling them is allowed.
+untyped_calls_exclude = ["transformers"]
+# pydantic's plugin checks the fields passed when a struct is made: Chapter(id=1, nmae=...) fails.
+plugins = ["pydantic.mypy"]
+
+[tool.pydantic-mypy]
+init_forbid_extra = true
+init_typed = true
+
+[[tool.mypy.overrides]]
+# These libraries ship no type information.
+module = ["spandrel", "spandrel.*", "torchvision", "torchvision.*"]
+ignore_missing_imports = true
+
+[tool.black]
+line-length = 300

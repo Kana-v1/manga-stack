@@ -1,0 +1,6 @@
+{
+  "venvPath": ".",
+  "venv": ".venv",
+  "exclude": [".venv", "data"],
+  "pythonVersion": "3.14"
+}

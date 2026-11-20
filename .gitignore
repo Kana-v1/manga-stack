@@ -24,3 +24,6 @@ __pycache__/
 /recommendations/*.md
 # Bun: type definitions and the TypeScript checker (bun install)
 /node_modules/
+# Recommendations: Python venv and the downloaded MovieLens data
+/recommendations/.venv/
+/recommendations/data/

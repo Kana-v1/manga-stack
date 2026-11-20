@@ -1,0 +1,7 @@
+# what main.py imports
+numpy
+pandas
+scipy
+# code checks (pyproject.toml)
+ruff==0.17.4
+mypy==2.4.1
