@@ -18,12 +18,13 @@ def main():
     test_users = sorted(list(users_intersection))
     
     test_data = test_data[test_data["user_id"].isin(test_users)] #  keep only the test ratings from users who also have ratings in train_data (since metrics join left) 
+    liked = test_data[test_data["rating"] >= 4] # remain only recommended items that user actually liked in test time (put at least rating 4)
 
     baseline_prediction = recommend.baseline(train_data, test_users)
     measures.append(
         metrics.measure(
             predictions=baseline_prediction,
-            true_values=test_data,
+            true_values=liked,
             all_values=train_data["item_id"],
             name="base_line",
             metrics=None,
@@ -35,7 +36,7 @@ def main():
     measures.append(
         metrics.measure(
             predictions=ease_prediction,
-            true_values=test_data,
+            true_values=liked,
             all_values=train_data["item_id"],
             name="ease",
             metrics=None,
@@ -47,7 +48,7 @@ def main():
     measures.append(
         metrics.measure(
             predictions=u2u_prediction,
-            true_values=test_data,
+            true_values=liked,
             all_values=train_data["item_id"],
             name="u2u",
             metrics=None,
