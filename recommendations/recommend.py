@@ -157,17 +157,20 @@ def user2user_CF(
 
         r(u, p) = R_mean[u] + nominator / denominator
 
-        nominator = sum(Sim(u, v) * R_norm[v][p])
-        denominator = sum(abs(Sim(u, v)))
+        nominator = sum(Sim(u, v) * R_norm[v][p]) -> do similar users like p?
+        denominator = sum(abs(Sim(u, v)))         -> essentially normalization over similarity
 
         [!] skipping v == u and R_norm[v][p] == np.nan
         """
+
         R_arr = R_norm.to_numpy(dtype=np.float64)
         mask = ~np.isnan(R_arr)  # True where rated
-
         np.fill_diagonal(S, 0)
-        X = np.nan_to_num(R_arr)  # unrated -> 0
-        nominator = S @ X
+        R_arr = np.nan_to_num(R_arr)  # unrated -> 0
+
+        # ---
+
+        nominator = S @ R_arr
         """
                 S                             R
              u1    u2    u3                p1    p2
@@ -179,9 +182,29 @@ def user2user_CF(
         [u1, p2] = 0·0   + 0.8·(−1) + (−0.2)·2 = −1.2
         """
 
-        denom = np.abs(S) @ mask
+        denominator = np.abs(S) @ mask
 
-        R = np.divide(nominator, denom, out=np.zeros_like(nominator), where=denom > 0)
+        # rectify recommendations when few neighbors' ratings are taking place
+        lambd = 2  # 1-5
+        denominator += lambd
+        """
+        item A: 1 real neighbour (sim 0.3) who loved it
+        
+        without lam:  0.45 / 0.3       = +1.50
+        with lam:     0.45 / (0.3 + 2) = +0.20
+
+        item B: 10 real neighbours (sim 0.3 each) who liked it
+        without lam:  3.0 / 3.0        = +1.00
+        with lam:     3.0 / (3.0 + 2)  = +0.60
+        
+        A.without_lam > B.without_lam
+        
+        lambd is kinda of imaginary neighour who always gives the same ratings. 
+        In this way it does not affect recommendations in the end of the day.
+        But rectifies results with small number of neighbors
+        """
+
+        R = np.divide(nominator, denominator, out=np.zeros_like(nominator), where=denominator > 0)
         P = R_mean.to_numpy()[:, None] + R  # predicted ratings: add each user's mean to their row
 
         P[mask] = -np.inf  # never recommend items the user rated in train
@@ -189,19 +212,33 @@ def user2user_CF(
         rows = R_norm.index.get_indexer(pd.Index(test_users))  # matrix row of each test user
         P = P[rows]
 
-        top_k_cols = np.argsort(P, axis=1, descending=True)[:, :10]  
-        top_k_preds = R_norm.columns.to_numpy()[top_k_cols].tolist() 
+        top_k_cols = np.argsort(P, axis=1, descending=True)[:, :10]
+        top_k_preds = R_norm.columns.to_numpy()[top_k_cols].tolist()
         top_k_scores = np.take_along_axis(P, top_k_cols, axis=1).tolist()
 
         return (top_k_preds, top_k_scores)
 
     S = calc_similarities()
-    
-    # filter out neighbors that aren't similar to each user 
-    top_neighbors  = np.quantile(S, 0.999, axis=1, keepdims=True, method='nearest')
-    S[S < top_neighbors] = 0 
-    # print(np.count_nonzero(S, axis=1))
-    
+
+    # shrink similarity by how many movies the two users both rated:
+    # the more shared movies, the more we trust that they really have similar taste
+    # 
+    # shared movies         trust factor           sim 1.0 becomes
+    #  2                2 / (2 + 20)   ≈ 0.09           0.09
+    #  50               50 / (50 + 20)  ≈ 0.71          0.71
+    #  200              200 / (200 + 20) ≈ 0.91         0.91
+    #
+    mask = R_norm.notna().to_numpy(dtype=np.float64)  # 1 where rated
+    n_common = mask @ mask.T - 1  # n(u1, u2): items both rated. -1 just because it's more smooth version, no special explanations
+    beta = 20  # how many shared movies you need before you trust a similarity
+    S *= n_common / (n_common + beta)
+
+    # filter out neighbors that aren't similar to the user
+    np.fill_diagonal(S, 0)
+    k = 50  # number of the most similar neighbours to each user to keep
+    kth = -np.partition(-S, k - 1, axis=1)[:, k - 1 : k]  # k-th largest similarity per row
+    S[S < kth] = 0
+
     top_k_predictions, top_k_scores = calc_top_k_predictions(S)
 
     users = []
@@ -217,5 +254,4 @@ def user2user_CF(
 
 
 def _empty_prediction() -> pd.DataFrame:
-
     return pd.DataFrame({"user_id": [], "item_id": [], "rating": []})
